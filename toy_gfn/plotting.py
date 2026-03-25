@@ -65,6 +65,45 @@ def plot_training_curves(history: List[Dict[str, float]], out_path: Path):
     _save_figure(fig, out_path)
 
 
+def plot_inverse_distillation_curves(history: List[Dict[str, float]], out_path: Path):
+    steps = [row["step"] for row in history]
+    gap = [row["generator_objective"] for row in history]
+    raw_gap = [row.get("generator_objective_raw", row["generator_objective"]) for row in history]
+    star_loss = [row["star_loss"] for row in history]
+    aux_loss = [row["aux_loss"] for row in history]
+    kl_target = [row["kl_target_to_generator"] for row in history]
+    aux_fit_l1 = [row["aux_fit_l1"] for row in history]
+
+    fig, axes = plt.subplots(1, 4, figsize=(17, 4))
+
+    axes[0].plot(steps, gap, label="used for update")
+    if any(abs(a - b) > 1e-12 for a, b in zip(gap, raw_gap)):
+        axes[0].plot(steps, raw_gap, label="raw gap")
+        axes[0].legend()
+    axes[0].set_title("Generator objective")
+    axes[0].set_xlabel("outer step")
+    axes[0].set_ylabel("L(G)")
+
+    axes[1].plot(steps, star_loss, label="L(f*, p_G)")
+    axes[1].plot(steps, aux_loss, label="L(f, p_G)")
+    axes[1].set_title("Fixed vs inner loss")
+    axes[1].set_xlabel("outer step")
+    axes[1].set_ylabel("loss")
+    axes[1].legend()
+
+    axes[2].plot(steps, kl_target)
+    axes[2].set_title("KL(target || generator)")
+    axes[2].set_xlabel("outer step")
+    axes[2].set_ylabel("KL")
+
+    axes[3].plot(steps, aux_fit_l1)
+    axes[3].set_title("L1(generator, auxiliary)")
+    axes[3].set_xlabel("outer step")
+    axes[3].set_ylabel("L1")
+
+    _save_figure(fig, out_path)
+
+
 def plot_sample_histogram(samples: np.ndarray, grid_size: int, out_path: Path):
     bins = np.arange(grid_size + 2) - 0.5
     fig, ax = plt.subplots(figsize=(5, 5))
