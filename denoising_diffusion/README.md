@@ -27,12 +27,20 @@ denoising_diffusion/
 
 Only `mnist` is implemented right now. Images are standardized before training with the dataset statistics `mean=0.1307` and `std=0.3081`, so the diffusion model sees approximately zero-mean, unit-variance inputs. The terminal reference distribution is a standard normal over these standardized image tensors.
 
+The diffusion schedule supports both `linear` and `cosine` beta schedules. For low-resolution images, `--beta-schedule cosine` is often the better default.
+
 ## Diffusion Training
 
 From the `denoising_diffusion/` directory:
 
 ```bash
 uv run denoising-diffusion-train --dataset mnist --device cpu
+```
+
+Cosine schedule example:
+
+```bash
+uv run denoising-diffusion-train --dataset mnist --device cpu --beta-schedule cosine
 ```
 
 Artifacts are written to `outputs/denoising_diffusion/run` by default and include:

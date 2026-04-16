@@ -7,7 +7,7 @@ from pathlib import Path
 from .data import available_datasets
 from .diffusion import TrainConfig as DiffusionTrainConfig
 from .diffusion import load_diffusion_checkpoint, train_diffusion
-from .diffusion.schedules import DDPMSchedule
+from .diffusion.schedules import DDPMSchedule, available_beta_schedules
 from .reward import (
     DetailedBalanceTrainConfig,
     available_detailed_balance_models,
@@ -39,8 +39,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diffusion-eval-every", type=int, default=500)
     parser.add_argument("--diffusion-eval-samples", type=int, default=64)
     parser.add_argument("--num-sample-steps", type=int, default=None)
+    parser.add_argument("--beta-schedule", choices=available_beta_schedules(), default="linear")
     parser.add_argument("--beta-start", type=float, default=1e-4)
     parser.add_argument("--beta-end", type=float, default=2e-2)
+    parser.add_argument("--cosine-s", type=float, default=0.008)
     parser.add_argument("--num-workers", type=int, default=0)
 
     parser.add_argument("--reward-train-steps", type=int, default=4000)
@@ -75,8 +77,10 @@ def main() -> None:
             eval_every=args.diffusion_eval_every,
             num_eval_samples=args.diffusion_eval_samples,
             num_sample_steps=args.num_sample_steps or 128,
+            beta_schedule=args.beta_schedule,
             beta_start=args.beta_start,
             beta_end=args.beta_end,
+            cosine_s=args.cosine_s,
             num_workers=args.num_workers,
             device=args.device,
         )
@@ -98,8 +102,10 @@ def main() -> None:
 
     schedule = DDPMSchedule(
         num_steps=diffusion_config.num_sample_steps,
+        beta_schedule=diffusion_config.beta_schedule,
         beta_start=diffusion_config.beta_start,
         beta_end=diffusion_config.beta_end,
+        cosine_s=diffusion_config.cosine_s,
     )
     reward_config = DetailedBalanceTrainConfig(
         dataset=diffusion_config.dataset,

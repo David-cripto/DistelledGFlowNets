@@ -35,8 +35,10 @@ class TrainConfig:
     eval_every: int = 500
     num_eval_samples: int = 64
     num_sample_steps: int = 128
+    beta_schedule: str = "linear"
     beta_start: float = 1e-4
     beta_end: float = 2e-2
+    cosine_s: float = 0.008
     num_workers: int = 0
     device: str = "cpu"
 
@@ -224,8 +226,10 @@ def train_image_diffusion(config: TrainConfig) -> TrainResult:
     reference_distribution = StandardNormalReference(image_shape=dataset_info.image_shape)
     schedule = DDPMSchedule(
         num_steps=config.num_sample_steps,
+        beta_schedule=config.beta_schedule,
         beta_start=config.beta_start,
         beta_end=config.beta_end,
+        cosine_s=config.cosine_s,
     )
 
     train_loader = _build_loader(

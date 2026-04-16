@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .data import available_datasets
 from .diffusion import TrainConfig, save_diffusion_artifacts, train_diffusion
+from .diffusion.schedules import available_beta_schedules
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,8 +22,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-every", type=int, default=500)
     parser.add_argument("--num-eval-samples", type=int, default=64)
     parser.add_argument("--num-sample-steps", type=int, default=128)
+    parser.add_argument("--beta-schedule", choices=available_beta_schedules(), default="linear")
     parser.add_argument("--beta-start", type=float, default=1e-4)
     parser.add_argument("--beta-end", type=float, default=2e-2)
+    parser.add_argument("--cosine-s", type=float, default=0.008)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cpu")
@@ -50,8 +53,10 @@ def main() -> None:
         eval_every=args.eval_every,
         num_eval_samples=args.num_eval_samples,
         num_sample_steps=args.num_sample_steps,
+        beta_schedule=args.beta_schedule,
         beta_start=args.beta_start,
         beta_end=args.beta_end,
+        cosine_s=args.cosine_s,
         num_workers=args.num_workers,
         device=args.device,
     )
