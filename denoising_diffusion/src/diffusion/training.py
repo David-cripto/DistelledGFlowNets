@@ -112,9 +112,13 @@ def reverse_diffusion_step(
     noise_prediction = model(x_t, schedule.time_values(timesteps))
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
     posterior_mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
-    reverse_std = torch.sqrt(schedule.extract(schedule.betas, timesteps, x_t).clamp_min(schedule.epsilon))
+    posterior_variance = schedule.posterior_variance(timesteps, x_t).clamp_min(schedule.epsilon)
+    reverse_std = torch.sqrt(posterior_variance)
     noise = torch.randn_like(x_t)
-    x_prev = posterior_mean + reverse_std * noise
+
+    # DDPM sampling does not inject fresh noise on the final reverse step.
+    nonzero_mask = (timesteps > 0).view(x_t.shape[0], *([1] * (x_t.ndim - 1)))
+    x_prev = posterior_mean + reverse_std * noise * nonzero_mask
     return x_prev, x0_prediction
 
 
