@@ -25,7 +25,7 @@ denoising_diffusion/
 
 ## Dataset
 
-Only `mnist` is implemented right now. Images are standardized before training with the dataset statistics `mean=0.1307` and `std=0.3081`, so the diffusion model sees approximately zero-mean, unit-variance inputs. The terminal reference distribution is a standard normal over these standardized image tensors.
+Only `mnist` is implemented right now. Images are resized to `28x28`, converted to tensors, and normalized with `Normalize((0.5,), (0.5,))`, which maps pixel values from `[0, 1]` to `[-1, 1]`. The terminal reference distribution is a standard normal over these image tensors.
 
 The diffusion schedule supports both `linear` and `cosine` beta schedules. For low-resolution images, `--beta-schedule cosine` is often the better default.
 

@@ -66,8 +66,8 @@ def get_dataset_info(name: str) -> DatasetInfo:
             name="mnist",
             image_shape=(1, 28, 28),
             num_classes=10,
-            channel_mean=(0.1307,),
-            channel_std=(0.3081,),
+            channel_mean=(0.5,),
+            channel_std=(0.5,),
         )
     raise ValueError(f"Unsupported dataset '{name}'. Expected one of {', '.join(AVAILABLE_DATASETS)}.")
 
@@ -83,8 +83,10 @@ def build_dataset(
     dataset_info = get_dataset_info(name)
 
     if name == "mnist":
+        spatial_size = dataset_info.image_shape[1:]
         transform = transforms.Compose(
             [
+                transforms.Resize(spatial_size),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=dataset_info.channel_mean, std=dataset_info.channel_std),
             ]
