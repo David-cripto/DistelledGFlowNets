@@ -9,16 +9,16 @@ from .diffusion.schedules import available_beta_schedules
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a DDPM denoiser on an image dataset")
+    parser = argparse.ArgumentParser(description="Train a DDPM UNet noise predictor on an image dataset")
     parser.add_argument("--dataset", choices=available_datasets(), default="mnist")
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--download", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--train-steps", type=int, default=10000)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--hidden-channels", type=int, default=64)
-    parser.add_argument("--depth", type=int, default=4)
-    parser.add_argument("--time-frequencies", type=int, default=16)
+    parser.add_argument("--hidden-channels", type=int, default=64, help="Base channel width of the UNet")
+    parser.add_argument("--depth", type=int, default=4, help="Number of UNet resolution levels")
+    parser.add_argument("--time-frequencies", type=int, default=16, help="Number of sinusoidal time frequencies")
     parser.add_argument("--eval-every", type=int, default=500)
     parser.add_argument("--num-eval-samples", type=int, default=64)
     parser.add_argument("--num-sample-steps", type=int, default=128)

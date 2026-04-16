@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from ..data import DatasetInfo, StandardNormalReference, build_dataset, extract_images, get_dataset_info
 from ..visualization import plot_training_curves, save_image_grid, save_trajectory_grid
-from .model import DenoiserCNN
+from .model import DenoiserCNN, build_denoiser
 from .schedules import DDPMSchedule
 
 
@@ -253,7 +253,7 @@ def train_image_diffusion(config: TrainConfig) -> TrainResult:
     train_batches = _cycle(train_loader)
     eval_batches = _cycle(eval_loader)
 
-    model = DenoiserCNN(
+    model = build_denoiser(
         image_channels=dataset_info.image_shape[0],
         hidden_channels=config.hidden_channels,
         depth=config.depth,
@@ -342,13 +342,20 @@ def load_diffusion_checkpoint(
     checkpoint = torch.load(checkpoint_path, map_location=device)
     config = TrainConfig(**checkpoint["config"])
     dataset_info = get_dataset_info(config.dataset)
-    model = DenoiserCNN(
+    model = build_denoiser(
         image_channels=dataset_info.image_shape[0],
         hidden_channels=config.hidden_channels,
         depth=config.depth,
         num_time_frequencies=config.time_frequencies,
     ).to(device)
-    model.load_state_dict(checkpoint["state_dict"])
+    try:
+        model.load_state_dict(checkpoint["state_dict"])
+    except RuntimeError as error:
+        raise RuntimeError(
+            "Failed to load the diffusion checkpoint into the current UNet denoiser. "
+            "This usually means the checkpoint was created with the earlier same-resolution CNN predictor "
+            "and needs to be retrained with the current architecture."
+        ) from error
     reference_distribution = StandardNormalReference(image_shape=dataset_info.image_shape)
     return model, reference_distribution, dataset_info, config
 
@@ -371,6 +378,7 @@ def save_run_artifacts(result: TrainResult, config: TrainConfig, out_dir: Path) 
             "config": asdict(config),
             "dataset": result.dataset_info.name,
             "image_shape": result.dataset_info.image_shape,
+            "predictor_architecture": "unet",
         },
         out_dir / "checkpoint.pt",
     )

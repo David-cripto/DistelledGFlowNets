@@ -4,7 +4,7 @@ This package ports the `toy_denoising_diffusion` workflow to image data. The fir
 
 It provides two training stages:
 
-1. Train a DDPM denoiser on the image dataset.
+1. Train a DDPM UNet denoiser on the image dataset.
 2. Train a detailed-balance reward model `f(x, t)` from a pretrained diffusion model.
 
 ## Layout
@@ -28,6 +28,8 @@ denoising_diffusion/
 Only `mnist` is implemented right now. Images are standardized before training with the dataset statistics `mean=0.1307` and `std=0.3081`, so the diffusion model sees approximately zero-mean, unit-variance inputs. The terminal reference distribution is a standard normal over these standardized image tensors.
 
 The diffusion schedule supports both `linear` and `cosine` beta schedules. For low-resolution images, `--beta-schedule cosine` is often the better default.
+
+The noise predictor is a UNet-style encoder-decoder with skip connections and time-conditioned residual blocks. It keeps the existing `model(x_t, t)` interface, but unlike the earlier same-resolution CNN it can aggregate multi-scale context before predicting the noise.
 
 ## Diffusion Training
 

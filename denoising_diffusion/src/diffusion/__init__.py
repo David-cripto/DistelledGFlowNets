@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .model import DenoiserCNN
+from .model import DenoiserCNN, DenoiserUNet, build_denoiser
 from .training import (
     TrainConfig,
     TrainResult,
@@ -15,8 +15,10 @@ from .training import (
 
 __all__ = [
     "DenoiserCNN",
+    "DenoiserUNet",
     "TrainConfig",
     "TrainResult",
+    "build_denoiser",
     "load_diffusion_checkpoint",
     "sample_model_samples",
     "sample_trajectory",

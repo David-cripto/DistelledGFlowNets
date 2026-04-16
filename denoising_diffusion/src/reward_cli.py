@@ -17,7 +17,9 @@ from .reward import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train f(x, t) with a detailed-balance loss on DDPM image transitions")
+    parser = argparse.ArgumentParser(
+        description="Train f(x, t) with a detailed-balance loss on DDPM image transitions from a UNet denoiser"
+    )
     parser.add_argument("--diffusion-checkpoint", type=Path, default=None)
     parser.add_argument("--dataset", choices=available_datasets(), default="mnist")
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
