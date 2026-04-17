@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ..diffusion.model import TimeEmbedding
+from ..diffusion.model import TimeEmbedding, prepare_time_embedding_input
 
 
 AVAILABLE_DETAILED_BALANCE_MODELS = ("direct",)
@@ -71,6 +71,7 @@ class DetailedBalanceMLP(DetailedBalanceModel):
     def __init__(
         self,
         input_shape: tuple[int, int, int],
+        num_train_timesteps: int,
         hidden_dim: int = 512,
         depth: int = 3,
         num_time_frequencies: int = 16,
@@ -78,8 +79,11 @@ class DetailedBalanceMLP(DetailedBalanceModel):
         super().__init__()
         if depth < 1:
             raise ValueError("depth must be at least 1")
+        if num_train_timesteps < 1:
+            raise ValueError("num_train_timesteps must be at least 1")
 
         self.input_shape = input_shape
+        self.num_train_timesteps = num_train_timesteps
         feature_channels = max(32, min(hidden_dim // 8, 128))
         self.time_embedding = TimeEmbedding(num_frequencies=num_time_frequencies)
         time_dim = feature_channels * 4
@@ -113,9 +117,15 @@ class DetailedBalanceMLP(DetailedBalanceModel):
         t: torch.Tensor,
         timesteps: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        del timesteps
         t = _prepare_inputs(x, t, self.input_shape)
-        time_features = self.time_mlp(self.time_embedding(t))
+        normalized_time = prepare_time_embedding_input(
+            t,
+            batch_size=x.shape[0],
+            device=x.device,
+            num_train_timesteps=self.num_train_timesteps,
+            timesteps=timesteps,
+        )
+        time_features = self.time_mlp(self.time_embedding(normalized_time))
         hidden = self.input_projection(x)
         for block in self.blocks:
             hidden = block(hidden, time_features)
@@ -130,6 +140,7 @@ def build_detailed_balance_model(
     hidden_dim: int,
     depth: int,
     num_time_frequencies: int,
+    num_train_timesteps: int,
 ) -> DetailedBalanceModel:
     if model_type != "direct":
         raise ValueError(
@@ -138,6 +149,7 @@ def build_detailed_balance_model(
         )
     return DetailedBalanceMLP(
         input_shape=input_shape,
+        num_train_timesteps=num_train_timesteps,
         hidden_dim=hidden_dim,
         depth=depth,
         num_time_frequencies=num_time_frequencies,

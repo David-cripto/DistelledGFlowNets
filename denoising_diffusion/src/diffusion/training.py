@@ -100,7 +100,7 @@ def predict_x0(
     timesteps: torch.Tensor,
     schedule: DDPMSchedule,
 ) -> torch.Tensor:
-    noise_prediction = model(x_t, schedule.time_values(timesteps))
+    noise_prediction = model(x_t, schedule.time_values(timesteps), timesteps=timesteps)
     return schedule.predict_x0(x_t, timesteps, noise_prediction)
 
 
@@ -111,7 +111,7 @@ def reverse_diffusion_step(
     timesteps: torch.Tensor,
     schedule: DDPMSchedule,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    noise_prediction = model(x_t, schedule.time_values(timesteps))
+    noise_prediction = model(x_t, schedule.time_values(timesteps), timesteps=timesteps)
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
     # This x0_hat form is algebraically equivalent to the standard DDPM
     # epsilon-parameterized reverse mean:
@@ -202,7 +202,7 @@ def _evaluate_model(
     noise = torch.randn_like(eval_batch)
     timesteps = schedule.sample_timesteps(eval_batch.shape[0], device=device)
     x_t = schedule.q_sample(eval_batch, timesteps, noise)
-    noise_prediction = model(x_t, schedule.time_values(timesteps))
+    noise_prediction = model(x_t, schedule.time_values(timesteps), timesteps=timesteps)
     eval_loss = F.mse_loss(noise_prediction, noise)
 
     model_samples = sample_model_samples(
@@ -260,6 +260,7 @@ def train_image_diffusion(config: TrainConfig) -> TrainResult:
         image_channels=dataset_info.image_shape[0],
         hidden_channels=config.hidden_channels,
         depth=config.depth,
+        num_train_timesteps=config.num_sample_steps,
         num_time_frequencies=config.time_frequencies,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
@@ -272,7 +273,7 @@ def train_image_diffusion(config: TrainConfig) -> TrainResult:
         timesteps = schedule.sample_timesteps(x0.shape[0], device=device)
         t = schedule.time_values(timesteps)
         x_t = schedule.q_sample(x0, timesteps, noise)
-        noise_prediction = model(x_t, t)
+        noise_prediction = model(x_t, t, timesteps=timesteps)
         loss = F.mse_loss(noise_prediction, noise)
 
         optimizer.zero_grad()
@@ -349,6 +350,7 @@ def load_diffusion_checkpoint(
         image_channels=dataset_info.image_shape[0],
         hidden_channels=config.hidden_channels,
         depth=config.depth,
+        num_train_timesteps=config.num_sample_steps,
         num_time_frequencies=config.time_frequencies,
     ).to(device)
     try:
@@ -356,8 +358,8 @@ def load_diffusion_checkpoint(
     except RuntimeError as error:
         raise RuntimeError(
             "Failed to load the diffusion checkpoint into the current UNet denoiser. "
-            "This usually means the checkpoint was created with the earlier same-resolution CNN predictor "
-            "and needs to be retrained with the current architecture."
+            "This usually means the checkpoint was created with an older predictor or time-embedding "
+            "configuration and needs to be retrained with the current architecture."
         ) from error
     reference_distribution = StandardNormalReference(image_shape=dataset_info.image_shape)
     return model, reference_distribution, dataset_info, config

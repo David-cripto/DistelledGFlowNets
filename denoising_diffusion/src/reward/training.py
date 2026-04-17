@@ -131,7 +131,7 @@ def _reverse_kernel_statistics(
     timesteps: torch.Tensor,
     schedule: DDPMSchedule,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    noise_prediction = denoiser(x_t, schedule.time_values(timesteps))
+    noise_prediction = denoiser(x_t, schedule.time_values(timesteps), timesteps=timesteps)
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
     # This mean matches the DDPM epsilon-parameterized reverse mean used in
     # the paper; we compute it through x0_hat only as an equivalent form.
@@ -269,6 +269,7 @@ def train_detailed_balance_model(
         hidden_dim=config.hidden_dim,
         depth=config.depth,
         num_time_frequencies=config.time_frequencies,
+        num_train_timesteps=schedule.num_steps,
     ).to(device)
 
     optimizer = torch.optim.AdamW(

@@ -15,19 +15,54 @@ def _group_norm_groups(num_channels: int) -> int:
 
 
 class TimeEmbedding(nn.Module):
-    def __init__(self, num_frequencies: int = 16):
+    def __init__(self, num_frequencies: int = 32, max_period: int = 10_000):
         super().__init__()
         if num_frequencies < 1:
             raise ValueError("num_frequencies must be at least 1")
+        if max_period <= 1:
+            raise ValueError("max_period must be greater than 1")
 
-        frequencies = (2.0 ** torch.arange(num_frequencies, dtype=torch.float32)) * math.pi
-        self.register_buffer("frequencies", frequencies, persistent=False)
-        self.output_dim = 1 + 2 * num_frequencies
+        self.num_frequencies = num_frequencies
+        self.max_period = max_period
+        self.output_dim = 2 * num_frequencies
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
-        t = t.view(-1, 1).to(dtype=torch.float32)
-        angles = t * self.frequencies.view(1, -1)
-        return torch.cat([t, torch.sin(angles), torch.cos(angles)], dim=-1)
+        t = t.reshape(-1).to(dtype=torch.float32)
+        frequencies = torch.exp(
+            -math.log(float(self.max_period))
+            * torch.arange(self.num_frequencies, device=t.device, dtype=t.dtype)
+            / max(self.num_frequencies - 1, 1)
+        )
+        angles = t[:, None] * frequencies[None, :]
+        return torch.cat([torch.cos(angles), torch.sin(angles)], dim=-1)
+
+
+def prepare_time_embedding_input(
+    t: torch.Tensor,
+    *,
+    batch_size: int,
+    device: torch.device,
+    num_train_timesteps: int,
+    timesteps: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if t.ndim == 0:
+        t = t.expand(batch_size)
+    if t.ndim != 1:
+        t = t.reshape(-1)
+    if t.shape[0] != batch_size:
+        raise ValueError("t must have shape [batch].")
+    t = t.to(device=device, dtype=torch.float32)
+    if timesteps is None:
+        return t
+
+    if timesteps.ndim == 0:
+        timesteps = timesteps.expand(batch_size)
+    if timesteps.ndim != 1:
+        timesteps = timesteps.reshape(-1)
+    if timesteps.shape[0] != batch_size:
+        raise ValueError("timesteps must have shape [batch].")
+    timesteps = timesteps.to(device=device, dtype=torch.float32)
+    return timesteps / max(num_train_timesteps - 1, 1)
 
 
 class _TimeConditionedResBlock(nn.Module):
@@ -100,6 +135,7 @@ class DenoiserUNet(nn.Module):
         image_channels: int = 1,
         hidden_channels: int = 64,
         depth: int = 4,
+        num_train_timesteps: int = 128,
         num_time_frequencies: int = 16,
     ):
         super().__init__()
@@ -107,10 +143,13 @@ class DenoiserUNet(nn.Module):
             raise ValueError("depth must be at least 2 for a UNet noise predictor.")
         if hidden_channels < 8:
             raise ValueError("hidden_channels must be at least 8.")
+        if num_train_timesteps < 1:
+            raise ValueError("num_train_timesteps must be at least 1.")
 
         self.image_channels = image_channels
         self.hidden_channels = hidden_channels
         self.depth = depth
+        self.num_train_timesteps = num_train_timesteps
         self.time_embedding = TimeEmbedding(num_frequencies=num_time_frequencies)
         time_dim = hidden_channels * 4
         self.channel_levels = [hidden_channels * (2**level) for level in range(depth)]
@@ -160,19 +199,24 @@ class DenoiserUNet(nn.Module):
         nn.init.zeros_(self.output_projection[-1].weight)
         nn.init.zeros_(self.output_projection[-1].bias)
 
-    def forward(self, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        timesteps: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if x_t.ndim != 4:
             raise ValueError("x_t must have shape [batch, channels, height, width].")
         if x_t.shape[1] != self.image_channels:
             raise ValueError(f"Expected {self.image_channels} channels, got {x_t.shape[1]}.")
-        if t.ndim == 0:
-            t = t.expand(x_t.shape[0])
-        if t.ndim != 1:
-            t = t.reshape(-1)
-        if t.shape[0] != x_t.shape[0]:
-            raise ValueError("t must have shape [batch].")
-
-        time_features = self.time_mlp(self.time_embedding(t))
+        normalized_time = prepare_time_embedding_input(
+            t,
+            batch_size=x_t.shape[0],
+            device=x_t.device,
+            num_train_timesteps=self.num_train_timesteps,
+            timesteps=timesteps,
+        )
+        time_features = self.time_mlp(self.time_embedding(normalized_time))
         x = self.input_projection(x_t)
         skips: list[torch.Tensor] = []
 
@@ -193,12 +237,14 @@ def build_denoiser(
     image_channels: int,
     hidden_channels: int,
     depth: int,
+    num_train_timesteps: int,
     num_time_frequencies: int,
 ) -> DenoiserUNet:
     return DenoiserUNet(
         image_channels=image_channels,
         hidden_channels=hidden_channels,
         depth=depth,
+        num_train_timesteps=num_train_timesteps,
         num_time_frequencies=num_time_frequencies,
     )
 

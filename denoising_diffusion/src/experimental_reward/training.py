@@ -131,7 +131,7 @@ def _reverse_kernel_statistics(
     timesteps: torch.Tensor,
     schedule: DDPMSchedule,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    noise_prediction = denoiser(x_t, schedule.time_values(timesteps))
+    noise_prediction = denoiser(x_t, schedule.time_values(timesteps), timesteps=timesteps)
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
     mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
     variance = schedule.extract(schedule.betas, timesteps, x_t)

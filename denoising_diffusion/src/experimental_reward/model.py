@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ..diffusion.model import TimeEmbedding
+from ..diffusion.model import TimeEmbedding, prepare_time_embedding_input
 
 
 AVAILABLE_EXPERIMENTAL_REWARD_MODELS = ("direct",)
@@ -145,9 +145,15 @@ class QuadraticOffsetDetailedBalanceMLP(ExperimentalRewardModel):
         t: torch.Tensor,
         timesteps: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        del timesteps
         t = _prepare_inputs(x, t, self.input_shape)
-        time_features = self.time_mlp(self.time_embedding(t))
+        normalized_time = prepare_time_embedding_input(
+            t,
+            batch_size=x.shape[0],
+            device=x.device,
+            num_train_timesteps=self.num_diffusion_steps,
+            timesteps=timesteps,
+        )
+        time_features = self.time_mlp(self.time_embedding(normalized_time))
         hidden = self.input_projection(x)
         for block in self.blocks:
             hidden = block(hidden, time_features)
