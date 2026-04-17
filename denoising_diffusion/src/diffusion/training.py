@@ -339,7 +339,7 @@ def load_diffusion_checkpoint(
     *,
     device: str = "cpu",
 ) -> tuple[DenoiserCNN, StandardNormalReference, DatasetInfo, TrainConfig]:
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     config = TrainConfig(**checkpoint["config"])
     dataset_info = get_dataset_info(config.dataset)
     model = build_denoiser(
