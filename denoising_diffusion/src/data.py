@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
 
 
-AVAILABLE_DATASETS = ("mnist",)
+AVAILABLE_DATASETS = ("mnist", "mnist_0", "mnist_1")
+_MNIST_FILTERED_DATASETS = {
+    "mnist_0": 0,
+    "mnist_1": 1,
+}
 _LOG_2PI = math.log(2.0 * math.pi)
 
 
@@ -61,15 +65,20 @@ def available_datasets() -> tuple[str, ...]:
 
 
 def get_dataset_info(name: str) -> DatasetInfo:
-    if name == "mnist":
+    if name == "mnist" or name in _MNIST_FILTERED_DATASETS:
         return DatasetInfo(
-            name="mnist",
+            name=name,
             image_shape=(1, 28, 28),
-            num_classes=10,
-            channel_mean=(0.1307,),
-            channel_std=(0.3081,),
+            num_classes=10 if name == "mnist" else 1,
+            channel_mean=(0.5,),
+            channel_std=(0.5,),
         )
     raise ValueError(f"Unsupported dataset '{name}'. Expected one of {', '.join(AVAILABLE_DATASETS)}.")
+
+
+def _filter_mnist_dataset(dataset: datasets.MNIST, digit: int) -> Subset:
+    indices = torch.nonzero(dataset.targets == digit, as_tuple=False).squeeze(1).tolist()
+    return Subset(dataset, indices)
 
 
 def build_dataset(
@@ -82,7 +91,7 @@ def build_dataset(
     root = Path(root)
     dataset_info = get_dataset_info(name)
 
-    if name == "mnist":
+    if name == "mnist" or name in _MNIST_FILTERED_DATASETS:
         spatial_size = dataset_info.image_shape[1:]
         transform = transforms.Compose(
             [
@@ -91,12 +100,16 @@ def build_dataset(
                 transforms.Normalize(mean=dataset_info.channel_mean, std=dataset_info.channel_std),
             ]
         )
-        return datasets.MNIST(
+        dataset = datasets.MNIST(
             root=str(root),
             train=train,
             download=download,
             transform=transform,
         )
+        target_digit = _MNIST_FILTERED_DATASETS.get(name)
+        if target_digit is not None:
+            return _filter_mnist_dataset(dataset, target_digit)
+        return dataset
 
     raise ValueError(f"Unsupported dataset '{name}'. Expected one of {', '.join(AVAILABLE_DATASETS)}.")
 

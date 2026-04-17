@@ -25,7 +25,7 @@ denoising_diffusion/
 
 ## Dataset
 
-Only `mnist` is implemented right now. Images are resized to `28x28`, converted to tensors, and normalized with `Normalize((0.5,), (0.5,))`, which maps pixel values from `[0, 1]` to `[-1, 1]`. The terminal reference distribution is a standard normal over these image tensors.
+The supported datasets are `mnist`, `mnist_0`, and `mnist_1`. The filtered variants keep only a single MNIST digit class. Images are resized to `28x28`, converted to tensors, and normalized with `Normalize((0.5,), (0.5,))`, which maps pixel values from `[0, 1]` to `[-1, 1]`. The terminal reference distribution is a standard normal over these image tensors.
 
 The diffusion schedule supports both `linear` and `cosine` beta schedules. For low-resolution images, `--beta-schedule cosine` is often the better default.
 
@@ -37,6 +37,12 @@ From the `denoising_diffusion/` directory:
 
 ```bash
 uv run denoising-diffusion-train --dataset mnist --device cpu
+```
+
+Single-digit example:
+
+```bash
+uv run denoising-diffusion-train --dataset mnist_0 --device cpu
 ```
 
 Cosine schedule example:
