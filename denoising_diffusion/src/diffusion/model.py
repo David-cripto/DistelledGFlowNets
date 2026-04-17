@@ -62,7 +62,7 @@ def prepare_time_embedding_input(
     if timesteps.shape[0] != batch_size:
         raise ValueError("timesteps must have shape [batch].")
     timesteps = timesteps.to(device=device, dtype=torch.float32)
-    return timesteps / max(num_train_timesteps - 1, 1)
+    return timesteps
 
 
 class _TimeConditionedResBlock(nn.Module):
