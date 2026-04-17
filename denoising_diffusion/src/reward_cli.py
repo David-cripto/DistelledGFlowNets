@@ -53,8 +53,8 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--reward-pretrain-steps", type=int, default=1000)
     parser.add_argument("--reward-pretrain-eval-every", type=int, default=250)
-    parser.add_argument("--reward-train-steps", type=int, default=4000)
-    parser.add_argument("--reward-lr", type=float, default=1e-4)
+    parser.add_argument("--reward-train-steps", type=int, default=10_000)
+    parser.add_argument("--reward-lr", type=float, default=1e-2)
     parser.add_argument("--reward-model", choices=available_detailed_balance_models(), default="direct")
     parser.add_argument("--reward-hidden-dim", type=int, default=512)
     parser.add_argument("--reward-depth", type=int, default=3)
@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--transition-trajectories",
         type=int,
-        default=64,
+        default=256,
         help="Number of data examples used in each reward minibatch",
     )
     parser.add_argument("--reward-eval-batch-size", type=int, default=256)
