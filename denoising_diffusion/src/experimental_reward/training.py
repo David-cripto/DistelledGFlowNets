@@ -16,7 +16,7 @@ from ..diffusion.model import DenoiserCNN
 from ..diffusion.schedules import DDPMSchedule
 from ..diffusion.training import sample_model_samples
 from ..visualization import plot_histograms, plot_training_curves, save_image_grid
-from .model import DetailedBalanceModel, build_detailed_balance_model
+from .model import ExperimentalRewardModel, build_detailed_balance_model
 
 
 torch.set_num_threads(1)
@@ -25,7 +25,7 @@ _LOG_2PI = math.log(2.0 * math.pi)
 
 
 @dataclass
-class DetailedBalanceTrainConfig:
+class ExperimentalRewardTrainConfig:
     dataset: str = "mnist"
     data_dir: str = "data"
     download: bool = True
@@ -49,13 +49,13 @@ class DetailedBalanceTrainConfig:
 
 
 @dataclass
-class DetailedBalanceTrainResult:
-    model: DetailedBalanceModel
+class ExperimentalRewardTrainResult:
+    model: ExperimentalRewardModel
     history: List[Dict[str, float]]
     real_samples: np.ndarray
     diffusion_samples: np.ndarray
-    boundary_log_scores: np.ndarray
-    boundary_target_log_scores: np.ndarray
+    boundary_residual_scores: np.ndarray
+    boundary_target_residuals: np.ndarray
     real_terminal_scores: np.ndarray
     generated_terminal_scores: np.ndarray
 
@@ -136,8 +136,6 @@ def _reverse_kernel_statistics(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     noise_prediction = denoiser(x_t, schedule.time_values(timesteps))
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
-    # This mean matches the DDPM epsilon-parameterized reverse mean used in
-    # the paper; we compute it through x0_hat only as an equivalent form.
     mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
     variance = schedule.posterior_variance(timesteps, x_t)
     return mean, variance
@@ -172,21 +170,20 @@ def _sample_reference_supervision_batch(
     batch_size: int,
     schedule: DDPMSchedule,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     states = reference_distribution.sample(batch_size, device=device)
     timesteps = torch.randint(0, schedule.num_steps, (batch_size,), device=device, dtype=torch.long)
     times = schedule.time_values(timesteps)
-    targets = reference_distribution.log_prob(states)
-    return states, timesteps, times, targets
+    return states, timesteps, times
 
 
 @torch.no_grad()
 def _evaluate_model(
-    model: DetailedBalanceModel,
+    model: ExperimentalRewardModel,
     denoiser: DenoiserCNN,
     reference_distribution: StandardNormalReference,
     eval_batch: torch.Tensor,
-    config: DetailedBalanceTrainConfig,
+    config: ExperimentalRewardTrainConfig,
     device: torch.device,
     schedule: DDPMSchedule,
 ) -> tuple[Dict[str, float], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -205,8 +202,8 @@ def _evaluate_model(
     boundary_states = reference_distribution.sample(num_samples, device=device)
     boundary_timesteps = torch.full((num_samples,), schedule.num_steps - 1, device=device, dtype=torch.long)
     boundary_times = schedule.time_values(boundary_timesteps)
-    boundary_predictions = model(boundary_states, boundary_times, timesteps=boundary_timesteps)
-    boundary_targets = reference_distribution.log_prob(boundary_states)
+    boundary_predictions = model.neural_score(boundary_states, boundary_times, timesteps=boundary_timesteps)
+    boundary_targets = torch.zeros_like(boundary_predictions)
 
     terminal_timesteps = torch.zeros((num_samples,), device=device, dtype=torch.long)
     terminal_times = torch.zeros((num_samples,), device=device)
@@ -223,13 +220,13 @@ def _evaluate_model(
     return metrics, diffusion_samples, boundary_predictions, boundary_targets, real_scores, generated_scores
 
 
-def train_detailed_balance_model(
-    config: DetailedBalanceTrainConfig,
+def train_experimental_reward_model(
+    config: ExperimentalRewardTrainConfig,
     denoiser: DenoiserCNN,
     reference_distribution: StandardNormalReference,
     dataset_info: DatasetInfo,
     schedule: DDPMSchedule,
-) -> DetailedBalanceTrainResult:
+) -> ExperimentalRewardTrainResult:
     set_seed(config.seed)
     device = torch.device(config.device)
     denoiser = denoiser.to(device).eval()
@@ -263,9 +260,9 @@ def train_detailed_balance_model(
         hidden_dim=config.hidden_dim,
         depth=config.depth,
         num_time_frequencies=config.time_frequencies,
+        num_diffusion_steps=schedule.num_steps,
     ).to(device)
-
-    optimizer = torch.optim.AdamW(
+    optimizer = torch.optim.Adam(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=config.lr,
     )
@@ -274,14 +271,14 @@ def train_detailed_balance_model(
         pretrain_eval_every = max(config.pretrain_eval_every, 1)
         for step in range(1, config.pretrain_steps + 1):
             model.train()
-            states, timesteps, times, targets = _sample_reference_supervision_batch(
+            states, timesteps, times = _sample_reference_supervision_batch(
                 reference_distribution=reference_distribution,
                 batch_size=config.batch_num_trajectories,
                 schedule=schedule,
                 device=device,
             )
-            predictions = model(states, times, timesteps=timesteps)
-            pretrain_loss = (predictions - targets).pow(2).mean()
+            predictions = model.neural_score(states, times, timesteps=timesteps)
+            pretrain_loss = predictions.pow(2).mean()
 
             optimizer.zero_grad()
             pretrain_loss.backward()
@@ -289,9 +286,9 @@ def train_detailed_balance_model(
 
             should_log = (step % pretrain_eval_every == 0) or (step == config.pretrain_steps)
             if should_log:
-                abs_error = torch.mean(torch.abs(predictions.detach() - targets)).cpu()
+                abs_error = torch.mean(torch.abs(predictions.detach())).cpu()
                 print(
-                    f"pretrain_step={step:5d} "
+                    f"experimental_pretrain_step={step:5d} "
                     f"loss={float(pretrain_loss.detach().cpu()):.6f} "
                     f"abs_err={float(abs_error):.6f}"
                 )
@@ -331,10 +328,8 @@ def train_detailed_balance_model(
             dtype=torch.long,
         )
         boundary_times = schedule.time_values(boundary_timesteps)
-        boundary_targets = reference_distribution.log_prob(boundary_states).detach()
-        boundary_penalty = (
-            model(boundary_states, boundary_times, timesteps=boundary_timesteps) - boundary_targets
-        ).pow(2).mean()
+        boundary_predictions = model.neural_score(boundary_states, boundary_times, timesteps=boundary_timesteps)
+        boundary_penalty = boundary_predictions.pow(2).mean()
         loss = detailed_balance_loss + config.boundary_penalty_weight * boundary_penalty
 
         optimizer.zero_grad()
@@ -370,7 +365,7 @@ def train_detailed_balance_model(
             }
             history.append(row)
             print(
-                f"db_step={step:5d} "
+                f"experimental_db_step={step:5d} "
                 f"loss={row['loss']:.6f} "
                 f"db={row['detailed_balance_loss']:.6f} "
                 f"boundary={row['boundary_penalty']:.6f} "
@@ -402,24 +397,24 @@ def train_detailed_balance_model(
     with torch.no_grad():
         real_terminal_scores = model(preview_batch, preview_times, timesteps=preview_timesteps)
         generated_terminal_scores = model(diffusion_samples, generated_times, timesteps=generated_timesteps)
-        boundary_log_scores = model(boundary_states, boundary_times, timesteps=boundary_timesteps)
-        boundary_target_log_scores = reference_distribution.log_prob(boundary_states)
+        boundary_residual_scores = model.neural_score(boundary_states, boundary_times, timesteps=boundary_timesteps)
+        boundary_target_residuals = torch.zeros_like(boundary_residual_scores)
 
-    return DetailedBalanceTrainResult(
+    return ExperimentalRewardTrainResult(
         model=model.cpu(),
         history=history,
         real_samples=preview_batch.cpu().numpy(),
         diffusion_samples=diffusion_samples.cpu().numpy(),
-        boundary_log_scores=boundary_log_scores.cpu().numpy(),
-        boundary_target_log_scores=boundary_target_log_scores.cpu().numpy(),
+        boundary_residual_scores=boundary_residual_scores.cpu().numpy(),
+        boundary_target_residuals=boundary_target_residuals.cpu().numpy(),
         real_terminal_scores=real_terminal_scores.cpu().numpy(),
         generated_terminal_scores=generated_terminal_scores.cpu().numpy(),
     )
 
 
-def save_detailed_balance_run_artifacts(
-    result: DetailedBalanceTrainResult,
-    config: DetailedBalanceTrainConfig,
+def save_experimental_reward_run_artifacts(
+    result: ExperimentalRewardTrainResult,
+    config: ExperimentalRewardTrainConfig,
     diffusion_config: Dict[str, object],
     out_dir: Path,
 ) -> None:
@@ -438,17 +433,17 @@ def save_detailed_balance_run_artifacts(
             "reward_config": asdict(config),
             "diffusion_config": diffusion_config,
         },
-        out_dir / "detailed_balance_checkpoint.pt",
+        out_dir / "experimental_reward_checkpoint.pt",
     )
 
     np.save(out_dir / "real_samples.npy", result.real_samples)
     np.save(out_dir / "diffusion_samples.npy", result.diffusion_samples)
-    np.save(out_dir / "boundary_log_scores.npy", result.boundary_log_scores)
-    np.save(out_dir / "boundary_target_log_scores.npy", result.boundary_target_log_scores)
+    np.save(out_dir / "boundary_residual_scores.npy", result.boundary_residual_scores)
+    np.save(out_dir / "boundary_target_residuals.npy", result.boundary_target_residuals)
     np.save(out_dir / "real_terminal_scores.npy", result.real_terminal_scores)
     np.save(out_dir / "generated_terminal_scores.npy", result.generated_terminal_scores)
 
-    with open(out_dir / "detailed_balance_metrics.json", "w", encoding="utf-8") as handle:
+    with open(out_dir / "experimental_reward_metrics.json", "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
     save_image_grid(
@@ -472,8 +467,8 @@ def save_detailed_balance_run_artifacts(
     )
     plot_histograms(
         {
-            "predicted boundary log-score": torch.from_numpy(result.boundary_log_scores),
-            "gaussian target log-score": torch.from_numpy(result.boundary_target_log_scores),
+            "boundary residual score": torch.from_numpy(result.boundary_residual_scores),
+            "zero target": torch.from_numpy(result.boundary_target_residuals),
         },
         out_path=out_dir / "boundary_alignment_histogram.png",
     )
@@ -487,11 +482,11 @@ def save_detailed_balance_run_artifacts(
             "boundary_rmse",
             "terminal_score_gap",
         ),
-        out_path=out_dir / "detailed_balance_training_curves.png",
+        out_path=out_dir / "experimental_reward_training_curves.png",
     )
 
 
-RewardLearningTrainConfig = DetailedBalanceTrainConfig
-RewardLearningTrainResult = DetailedBalanceTrainResult
-train_reward_learning_model = train_detailed_balance_model
-save_reward_learning_run_artifacts = save_detailed_balance_run_artifacts
+DetailedBalanceTrainConfig = ExperimentalRewardTrainConfig
+DetailedBalanceTrainResult = ExperimentalRewardTrainResult
+train_detailed_balance_model = train_experimental_reward_model
+save_detailed_balance_run_artifacts = save_experimental_reward_run_artifacts

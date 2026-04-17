@@ -16,9 +16,11 @@ denoising_diffusion/
 └── src/
     ├── cli.py
     ├── reward_cli.py
+    ├── experimental_reward_cli.py
     ├── compatibility_cli.py
     ├── data.py
     ├── diffusion/
+    ├── experimental_reward/
     ├── reward/
     └── visualization/
 ```
@@ -87,6 +89,26 @@ Artifacts are written to `outputs/denoising_diffusion/<dataset>/detailed_balance
 - `detailed_balance_training_curves.png`
 
 Only the direct `DetailedBalanceMLP` reward parameterization is implemented in this image version. Despite the name, it now uses a CNN feature extractor over the image and a small time-conditioned MLP head for the final scalar score.
+
+## Experimental Reward
+
+The experimental variant lives in `src/experimental_reward/`. It uses the parameterization
+
+```text
+F(x, t) = NN(x, t) - 0.5 * w(t) * ||x||^2
+```
+
+where `w(t)` is the normalized diffusion timestep and reaches `1` at the terminal diffusion step. With this form, Gaussian boundary supervision no longer tries to fit the full Gaussian log-density directly. Instead, it drives the neural residual `NN(x, t)` to zero on Gaussian samples, so the total score matches the Gaussian reference up to its additive normalizing constant.
+
+Run it with:
+
+```bash
+uv run denoising-diffusion-experimental-reward \
+  --diffusion-checkpoint outputs/denoising_diffusion/mnist/run/checkpoint.pt \
+  --device cpu
+```
+
+By default, artifacts are written to `outputs/denoising_diffusion/<dataset>/experimental_reward_run`.
 
 ## Compatibility CLI
 

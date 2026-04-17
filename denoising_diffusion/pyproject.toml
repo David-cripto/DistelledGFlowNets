@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 denoising-diffusion-train = "src.cli:main"
 denoising-diffusion-reward = "src.reward_cli:main"
+denoising-diffusion-experimental-reward = "src.experimental_reward_cli:main"
 denoising-diffusion-compatibility = "src.compatibility_cli:main"
 
 [tool.hatch.build.targets.wheel]
