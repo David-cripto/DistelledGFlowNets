@@ -113,6 +113,9 @@ def reverse_diffusion_step(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     noise_prediction = model(x_t, schedule.time_values(timesteps))
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
+    # This q(x_{t-1} | x_t, x0_hat) form is algebraically equivalent to the
+    # standard DDPM epsilon-parameterized mean:
+    # mu_theta = 1/sqrt(alpha_t) * (x_t - beta_t/sqrt(1-alpha_bar_t) * eps_theta).
     posterior_mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
     posterior_variance = schedule.posterior_variance(timesteps, x_t).clamp_min(schedule.epsilon)
     reverse_std = torch.sqrt(posterior_variance)

@@ -25,7 +25,7 @@ denoising_diffusion/
 
 ## Dataset
 
-The supported datasets are `mnist`, `mnist_0`, and `mnist_1`. The filtered variants keep only a single MNIST digit class. Images are resized to `28x28`, converted to tensors, and normalized with `Normalize((0.5,), (0.5,))`, which maps pixel values from `[0, 1]` to `[-1, 1]`. The terminal reference distribution is a standard normal over these image tensors.
+The supported datasets are `mnist`, `mnist_0`, and `mnist_1`. The filtered variants keep only a single MNIST digit class. Images are resized to `28x28`, converted to tensors, and standardized with the usual MNIST statistics `Normalize((0.1307,), (0.3081,))`, so the inputs seen by the diffusion model are approximately zero mean and unit variance. The terminal reference distribution is a standard normal over these image tensors.
 
 The diffusion schedule supports both `linear` and `cosine` beta schedules. For low-resolution images, `--beta-schedule cosine` is often the better default.
 
@@ -75,7 +75,7 @@ Or train diffusion and reward in a single command:
 uv run denoising-diffusion-reward --dataset mnist --device cpu
 ```
 
-By default, reward training now starts with a Gaussian pretraining stage: it samples `x ~ N(0, I)` and random timesteps, then fits the reward network to the Gaussian log-density before detailed-balance training. You can control it with `--reward-pretrain-steps` or disable it with `--reward-pretrain-steps 0`.
+Before the detailed-balance stage, the reward model is first pretrained on Gaussian samples from the reference distribution. It sees random timesteps and regresses to the standard normal log-density, which helps initialize the boundary behavior. Disable this stage with `--reward-pretrain-steps 0`.
 
 Artifacts are written to `outputs/denoising_diffusion/<dataset>/detailed_balance_run` by default and include:
 

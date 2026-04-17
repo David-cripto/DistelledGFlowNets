@@ -51,9 +51,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cosine-s", type=float, default=0.008)
     parser.add_argument("--num-workers", type=int, default=0)
 
-    parser.add_argument("--reward-pretrain-steps", type=int, default=1000)
-    parser.add_argument("--reward-pretrain-eval-every", type=int, default=250)
     parser.add_argument("--reward-train-steps", type=int, default=10_000)
+    parser.add_argument("--reward-pretrain-steps", type=int, default=1_000)
+    parser.add_argument("--reward-pretrain-eval-every", type=int, default=250)
     parser.add_argument("--reward-lr", type=float, default=1e-2)
     parser.add_argument("--reward-model", choices=available_detailed_balance_models(), default="direct")
     parser.add_argument("--reward-hidden-dim", type=int, default=512)
@@ -125,9 +125,9 @@ def main() -> None:
         dataset=diffusion_config.dataset,
         data_dir=str(args.data_dir),
         download=args.download,
+        train_steps=args.reward_train_steps,
         pretrain_steps=args.reward_pretrain_steps,
         pretrain_eval_every=args.reward_pretrain_eval_every,
-        train_steps=args.reward_train_steps,
         batch_num_trajectories=args.transition_trajectories,
         eval_batch_size=args.reward_eval_batch_size,
         lr=args.reward_lr,

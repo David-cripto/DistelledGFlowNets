@@ -29,9 +29,9 @@ class DetailedBalanceTrainConfig:
     dataset: str = "mnist"
     data_dir: str = "data"
     download: bool = True
+    train_steps: int = 4000
     pretrain_steps: int = 1000
     pretrain_eval_every: int = 250
-    train_steps: int = 4000
     batch_num_trajectories: int = 64
     eval_batch_size: int = 256
     lr: float = 1e-4
@@ -127,20 +127,6 @@ def _sample_transition_pairs(
     return x_t, x_prev, timesteps, t_now, t_prev, reverse_mean, reverse_variance
 
 
-def _sample_reference_supervision_batch(
-    reference_distribution: StandardNormalReference,
-    batch_size: int,
-    schedule: DDPMSchedule,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    states = reference_distribution.sample(batch_size, device=device)
-    timesteps = schedule.sample_timesteps(batch_size, device=device)
-    timesteps = torch.zeros((batch_size, ), device=device)
-    times = schedule.time_values(timesteps)
-    targets = reference_distribution.log_prob(states)
-    return states, timesteps, times, targets
-
-
 @torch.no_grad()
 def _reverse_kernel_statistics(
     denoiser: DenoiserCNN,
@@ -150,6 +136,8 @@ def _reverse_kernel_statistics(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     noise_prediction = denoiser(x_t, schedule.time_values(timesteps))
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
+    # This mean matches the DDPM epsilon-parameterized reverse mean used in
+    # the paper; we compute it through x0_hat only as an equivalent form.
     mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
     variance = schedule.posterior_variance(timesteps, x_t)
     return mean, variance
@@ -176,6 +164,20 @@ def _isotropic_gaussian_log_prob(
     squared_error = (samples - mean).reshape(samples.shape[0], -1).pow(2).sum(dim=-1)
     variance_flat = variance.reshape(samples.shape[0], -1)[:, 0]
     return -0.5 * (squared_error / variance_flat + flat_dim * (_LOG_2PI + torch.log(variance_flat)))
+
+
+@torch.no_grad()
+def _sample_reference_supervision_batch(
+    reference_distribution: StandardNormalReference,
+    batch_size: int,
+    schedule: DDPMSchedule,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    states = reference_distribution.sample(batch_size, device=device)
+    timesteps = torch.randint(0, schedule.num_steps, (batch_size,), device=device, dtype=torch.long)
+    times = schedule.time_values(timesteps)
+    targets = reference_distribution.log_prob(states)
+    return states, timesteps, times, targets
 
 
 @torch.no_grad()
@@ -267,34 +269,33 @@ def train_detailed_balance_model(
         lr=config.lr,
     )
 
-    history: List[Dict[str, float]] = []
-
-    for pretrain_step in range(config.pretrain_steps):
-        model.train()
-        states, timesteps, times, targets = _sample_reference_supervision_batch(
-            reference_distribution=reference_distribution,
-            batch_size=config.batch_num_trajectories,
-            schedule=schedule,
-            device=device,
-        )
-        predictions = model(states, times, timesteps=timesteps)
-        pretrain_loss = (predictions - targets).pow(2).mean()
-
-        optimizer.zero_grad()
-        pretrain_loss.backward()
-        optimizer.step()
-
-        should_log = (
-            pretrain_step % config.pretrain_eval_every == 0
-            or pretrain_step == config.pretrain_steps - 1
-        )
-        if should_log:
-            abs_error = torch.mean(torch.abs(predictions.detach() - targets.detach()))
-            print(
-                f"pretrain_step={pretrain_step:5d} "
-                f"loss={float(pretrain_loss.detach().cpu()):.6f} "
-                f"abs_err={float(abs_error.cpu()):.6f}"
+    if config.pretrain_steps > 0:
+        pretrain_eval_every = max(config.pretrain_eval_every, 1)
+        for step in range(1, config.pretrain_steps + 1):
+            model.train()
+            states, timesteps, times, targets = _sample_reference_supervision_batch(
+                reference_distribution=reference_distribution,
+                batch_size=config.batch_num_trajectories,
+                schedule=schedule,
+                device=device,
             )
+            predictions = model(states, times, timesteps=timesteps)
+            pretrain_loss = (predictions - targets).pow(2).mean()
+
+            optimizer.zero_grad()
+            pretrain_loss.backward()
+            optimizer.step()
+
+            should_log = (step % pretrain_eval_every == 0) or (step == config.pretrain_steps)
+            if should_log:
+                abs_error = torch.mean(torch.abs(predictions.detach() - targets)).cpu()
+                print(
+                    f"pretrain_step={step:5d} "
+                    f"loss={float(pretrain_loss.detach().cpu()):.6f} "
+                    f"abs_err={float(abs_error):.6f}"
+                )
+
+    history: List[Dict[str, float]] = []
 
     for step in range(config.train_steps + 1):
         model.train()
