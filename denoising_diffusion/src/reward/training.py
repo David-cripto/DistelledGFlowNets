@@ -98,25 +98,31 @@ def _cycle(loader: DataLoader) -> Iterator[torch.Tensor]:
 
 @torch.no_grad()
 def _sample_transition_pairs(
+    denoiser: DenoiserCNN,
     x0: torch.Tensor,
     schedule: DDPMSchedule,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size = x0.shape[0]
     x0 = x0.to(device)
     timesteps = torch.randint(1, schedule.num_steps, (batch_size,), device=device, dtype=torch.long)
     noise = torch.randn_like(x0)
     x_t = schedule.q_sample(x0, timesteps, noise)
 
-    q_prev_mean = schedule.posterior_mean(x0, x_t, timesteps)
-    q_prev_variance = schedule.posterior_variance(timesteps, x_t).clamp_min(schedule.epsilon)
-    q_prev_std = torch.sqrt(q_prev_variance)
-    x_prev = q_prev_mean + q_prev_std * torch.randn_like(x_t)
+    reverse_mean, reverse_variance = _reverse_kernel_statistics(
+        denoiser=denoiser,
+        x_t=x_t,
+        timesteps=timesteps,
+        schedule=schedule,
+    )
+    reverse_variance = reverse_variance.clamp_min(schedule.epsilon)
+    reverse_std = torch.sqrt(reverse_variance)
+    x_prev = reverse_mean + reverse_std * torch.randn_like(x_t)
 
     t_now = schedule.time_values(timesteps)
     previous_timesteps = timesteps - 1
     t_prev = schedule.time_values(previous_timesteps)
-    return x_t, x_prev, timesteps, t_now, t_prev
+    return x_t, x_prev, timesteps, t_now, t_prev, reverse_mean, reverse_variance
 
 
 @torch.no_grad()
@@ -250,19 +256,14 @@ def train_detailed_balance_model(
     for step in range(config.train_steps + 1):
         model.train()
         x0 = next(train_batches).to(device)
-        x_t, x_prev, timesteps, t_now, t_prev = _sample_transition_pairs(
+        x_t, x_prev, timesteps, t_now, t_prev, reverse_mean, reverse_variance = _sample_transition_pairs(
+            denoiser=denoiser,
             x0=x0,
             schedule=schedule,
             device=device,
         )
 
         with torch.no_grad():
-            reverse_mean, reverse_variance = _reverse_kernel_statistics(
-                denoiser=denoiser,
-                x_t=x_t,
-                timesteps=timesteps,
-                schedule=schedule,
-            )
             forward_mean, forward_variance = _forward_kernel_statistics(
                 x_prev=x_prev,
                 timesteps=timesteps,
