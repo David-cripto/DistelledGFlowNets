@@ -29,6 +29,8 @@ class DetailedBalanceTrainConfig:
     dataset: str = "mnist"
     data_dir: str = "data"
     download: bool = True
+    pretrain_steps: int = 1000
+    pretrain_eval_every: int = 250
     train_steps: int = 4000
     batch_num_trajectories: int = 64
     eval_batch_size: int = 256
@@ -123,6 +125,19 @@ def _sample_transition_pairs(
     previous_timesteps = timesteps - 1
     t_prev = schedule.time_values(previous_timesteps)
     return x_t, x_prev, timesteps, t_now, t_prev, reverse_mean, reverse_variance
+
+
+def _sample_reference_supervision_batch(
+    reference_distribution: StandardNormalReference,
+    batch_size: int,
+    schedule: DDPMSchedule,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    states = reference_distribution.sample(batch_size, device=device)
+    timesteps = schedule.sample_timesteps(batch_size, device=device)
+    times = schedule.time_values(timesteps)
+    targets = reference_distribution.log_prob(states)
+    return states, timesteps, times, targets
 
 
 @torch.no_grad()
@@ -252,6 +267,33 @@ def train_detailed_balance_model(
     )
 
     history: List[Dict[str, float]] = []
+
+    for pretrain_step in range(config.pretrain_steps):
+        model.train()
+        states, timesteps, times, targets = _sample_reference_supervision_batch(
+            reference_distribution=reference_distribution,
+            batch_size=config.batch_num_trajectories,
+            schedule=schedule,
+            device=device,
+        )
+        predictions = model(states, times, timesteps=timesteps)
+        pretrain_loss = (predictions - targets).pow(2).mean()
+
+        optimizer.zero_grad()
+        pretrain_loss.backward()
+        optimizer.step()
+
+        should_log = (
+            pretrain_step % config.pretrain_eval_every == 0
+            or pretrain_step == config.pretrain_steps - 1
+        )
+        if should_log:
+            abs_error = torch.mean(torch.abs(predictions.detach() - targets.detach()))
+            print(
+                f"pretrain_step={pretrain_step:5d} "
+                f"loss={float(pretrain_loss.detach().cpu()):.6f} "
+                f"abs_err={float(abs_error.cpu()):.6f}"
+            )
 
     for step in range(config.train_steps + 1):
         model.train()

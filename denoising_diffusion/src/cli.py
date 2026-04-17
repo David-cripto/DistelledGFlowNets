@@ -8,6 +8,10 @@ from .diffusion import TrainConfig, save_diffusion_artifacts, train_diffusion
 from .diffusion.schedules import available_beta_schedules
 
 
+def _default_out_dir(dataset: str) -> Path:
+    return Path("outputs") / "denoising_diffusion" / dataset / "run"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a DDPM UNet noise predictor on an image dataset")
     parser.add_argument("--dataset", choices=available_datasets(), default="mnist")
@@ -32,13 +36,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("outputs") / "denoising_diffusion" / "run",
+        default=None,
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    out_dir = args.out_dir or _default_out_dir(args.dataset)
     config = TrainConfig(
         dataset=args.dataset,
         data_dir=str(args.data_dir),
@@ -61,8 +66,8 @@ def main() -> None:
         device=args.device,
     )
     result = train_diffusion(config)
-    save_diffusion_artifacts(result, config, args.out_dir)
-    print(f"Saved run to: {args.out_dir}")
+    save_diffusion_artifacts(result, config, out_dir)
+    print(f"Saved run to: {out_dir}")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ from .reward import (
 )
 
 
+def _default_out_dir(dataset: str) -> Path:
+    return Path("outputs") / "denoising_diffusion" / dataset / "detailed_balance_run"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train f(x, t) with a detailed-balance loss on DDPM image transitions from a UNet denoiser"
@@ -29,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("outputs") / "denoising_diffusion" / "detailed_balance_run",
+        default=None,
     )
 
     parser.add_argument("--diffusion-train-steps", type=int, default=10000)
@@ -47,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cosine-s", type=float, default=0.008)
     parser.add_argument("--num-workers", type=int, default=0)
 
+    parser.add_argument("--reward-pretrain-steps", type=int, default=1000)
+    parser.add_argument("--reward-pretrain-eval-every", type=int, default=250)
     parser.add_argument("--reward-train-steps", type=int, default=4000)
     parser.add_argument("--reward-lr", type=float, default=1e-4)
     parser.add_argument("--reward-model", choices=available_detailed_balance_models(), default="direct")
@@ -105,8 +111,9 @@ def main() -> None:
                 "The reward schedule must match the diffusion checkpoint. "
                 f"Checkpoint uses num_sample_steps={diffusion_config.num_sample_steps}, "
                 f"received {args.num_sample_steps}."
-            )
+        )
 
+    out_dir = args.out_dir or _default_out_dir(diffusion_config.dataset)
     schedule = DDPMSchedule(
         num_steps=diffusion_config.num_sample_steps,
         beta_schedule=diffusion_config.beta_schedule,
@@ -118,6 +125,8 @@ def main() -> None:
         dataset=diffusion_config.dataset,
         data_dir=str(args.data_dir),
         download=args.download,
+        pretrain_steps=args.reward_pretrain_steps,
+        pretrain_eval_every=args.reward_pretrain_eval_every,
         train_steps=args.reward_train_steps,
         batch_num_trajectories=args.transition_trajectories,
         eval_batch_size=args.reward_eval_batch_size,
@@ -145,9 +154,9 @@ def main() -> None:
         result=reward_result,
         config=reward_config,
         diffusion_config=asdict(diffusion_config),
-        out_dir=args.out_dir,
+        out_dir=out_dir,
     )
-    print(f"Saved detailed-balance run to: {args.out_dir}")
+    print(f"Saved detailed-balance run to: {out_dir}")
 
 
 if __name__ == "__main__":

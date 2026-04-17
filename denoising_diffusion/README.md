@@ -51,7 +51,7 @@ Cosine schedule example:
 uv run denoising-diffusion-train --dataset mnist --device cpu --beta-schedule cosine
 ```
 
-Artifacts are written to `outputs/denoising_diffusion/run` by default and include:
+Artifacts are written to `outputs/denoising_diffusion/<dataset>/run` by default and include:
 
 - `checkpoint.pt`
 - `real_samples.png`
@@ -65,7 +65,7 @@ Train from a saved diffusion checkpoint:
 
 ```bash
 uv run denoising-diffusion-reward \
-  --diffusion-checkpoint outputs/denoising_diffusion/run/checkpoint.pt \
+  --diffusion-checkpoint outputs/denoising_diffusion/mnist/run/checkpoint.pt \
   --device cpu
 ```
 
@@ -75,7 +75,9 @@ Or train diffusion and reward in a single command:
 uv run denoising-diffusion-reward --dataset mnist --device cpu
 ```
 
-Artifacts are written to `outputs/denoising_diffusion/detailed_balance_run` by default and include:
+By default, reward training now starts with a Gaussian pretraining stage: it samples `x ~ N(0, I)` and random timesteps, then fits the reward network to the Gaussian log-density before detailed-balance training. You can control it with `--reward-pretrain-steps` or disable it with `--reward-pretrain-steps 0`.
+
+Artifacts are written to `outputs/denoising_diffusion/<dataset>/detailed_balance_run` by default and include:
 
 - `detailed_balance_checkpoint.pt`
 - `real_samples.png`
