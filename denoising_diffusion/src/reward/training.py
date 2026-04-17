@@ -135,6 +135,7 @@ def _sample_reference_supervision_batch(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     states = reference_distribution.sample(batch_size, device=device)
     timesteps = schedule.sample_timesteps(batch_size, device=device)
+    timesteps = torch.zeros((batch_size, ), device=device)
     times = schedule.time_values(timesteps)
     targets = reference_distribution.log_prob(states)
     return states, timesteps, times, targets
