@@ -69,6 +69,7 @@ def _build_loader(
     data_dir: str | Path,
     *,
     batch_size: int,
+    train: bool,
     download: bool,
     num_workers: int,
     pin_memory: bool,
@@ -76,14 +77,14 @@ def _build_loader(
     dataset = build_dataset(
         dataset_name,
         root=data_dir,
-        train=False,
+        train=train,
         download=download,
     )
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
-        drop_last=False,
+        shuffle=train,
+        drop_last=train,
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
@@ -97,48 +98,25 @@ def _cycle(loader: DataLoader) -> Iterator[torch.Tensor]:
 
 @torch.no_grad()
 def _sample_transition_pairs(
-    denoiser: DenoiserCNN,
-    reference_distribution: StandardNormalReference,
-    num_trajectories: int,
+    x0: torch.Tensor,
     schedule: DDPMSchedule,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    current = reference_distribution.sample(num_trajectories, device=device)
+    batch_size = x0.shape[0]
+    x0 = x0.to(device)
+    timesteps = torch.randint(1, schedule.num_steps, (batch_size,), device=device, dtype=torch.long)
+    noise = torch.randn_like(x0)
+    x_t = schedule.q_sample(x0, timesteps, noise)
 
-    denoiser.eval()
-    x_t_list = []
-    x_prev_list = []
-    timestep_list = []
-    t_now_list = []
-    t_prev_list = []
+    q_prev_mean = schedule.posterior_mean(x0, x_t, timesteps)
+    q_prev_variance = schedule.posterior_variance(timesteps, x_t).clamp_min(schedule.epsilon)
+    q_prev_std = torch.sqrt(q_prev_variance)
+    x_prev = q_prev_mean + q_prev_std * torch.randn_like(x_t)
 
-    for step in range(schedule.num_steps - 1, -1, -1):
-        timesteps = torch.full((num_trajectories,), step, device=device, dtype=torch.long)
-        t_now = schedule.time_values(timesteps)
-        t_prev = torch.full((num_trajectories,), float(step) / float(schedule.num_steps), device=device)
-        reverse_mean, reverse_variance = _reverse_kernel_statistics(
-            denoiser=denoiser,
-            x_t=current,
-            timesteps=timesteps,
-            schedule=schedule,
-        )
-        reverse_std = torch.sqrt(reverse_variance.clamp_min(schedule.epsilon))
-        previous = reverse_mean + reverse_std * torch.randn_like(current)
-
-        x_t_list.append(current.detach())
-        x_prev_list.append(previous.detach())
-        timestep_list.append(timesteps.detach())
-        t_now_list.append(t_now.detach())
-        t_prev_list.append(t_prev.detach())
-        current = previous
-
-    return (
-        torch.cat(x_t_list, dim=0),
-        torch.cat(x_prev_list, dim=0),
-        torch.cat(timestep_list, dim=0),
-        torch.cat(t_now_list, dim=0),
-        torch.cat(t_prev_list, dim=0),
-    )
+    t_now = schedule.time_values(timesteps)
+    previous_timesteps = timesteps - 1
+    t_prev = schedule.time_values(previous_timesteps)
+    return x_t, x_prev, timesteps, t_now, t_prev
 
 
 @torch.no_grad()
@@ -151,7 +129,7 @@ def _reverse_kernel_statistics(
     noise_prediction = denoiser(x_t, schedule.time_values(timesteps))
     x0_prediction = schedule.predict_x0(x_t, timesteps, noise_prediction)
     mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
-    variance = schedule.extract(schedule.betas, timesteps, x_t)
+    variance = schedule.posterior_variance(timesteps, x_t)
     return mean, variance
 
 
@@ -238,10 +216,21 @@ def train_detailed_balance_model(
         config.dataset,
         config.data_dir,
         batch_size=config.eval_batch_size,
+        train=False,
         download=config.download,
         num_workers=config.num_workers,
         pin_memory=device.type == "cuda",
     )
+    train_loader = _build_loader(
+        config.dataset,
+        config.data_dir,
+        batch_size=config.batch_num_trajectories,
+        train=True,
+        download=config.download,
+        num_workers=config.num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    train_batches = _cycle(train_loader)
     eval_batches = _cycle(eval_loader)
 
     model = build_detailed_balance_model(
@@ -260,10 +249,9 @@ def train_detailed_balance_model(
 
     for step in range(config.train_steps + 1):
         model.train()
+        x0 = next(train_batches).to(device)
         x_t, x_prev, timesteps, t_now, t_prev = _sample_transition_pairs(
-            denoiser=denoiser,
-            reference_distribution=reference_distribution,
-            num_trajectories=config.batch_num_trajectories,
+            x0=x0,
             schedule=schedule,
             device=device,
         )
@@ -289,9 +277,14 @@ def train_detailed_balance_model(
         residual = log_f_prev + log_q - log_f_t - log_p
         detailed_balance_loss = residual.pow(2).mean()
 
-        boundary_states = x_t[: config.batch_num_trajectories]
-        boundary_times = t_now[: config.batch_num_trajectories]
-        boundary_timesteps = timesteps[: config.batch_num_trajectories]
+        boundary_states = reference_distribution.sample(config.batch_num_trajectories, device=device)
+        boundary_timesteps = torch.full(
+            (config.batch_num_trajectories,),
+            schedule.num_steps - 1,
+            device=device,
+            dtype=torch.long,
+        )
+        boundary_times = schedule.time_values(boundary_timesteps)
         boundary_targets = reference_distribution.log_prob(boundary_states).detach()
         boundary_penalty = (
             model(boundary_states, boundary_times, timesteps=boundary_timesteps) - boundary_targets

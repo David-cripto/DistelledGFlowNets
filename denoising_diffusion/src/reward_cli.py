@@ -55,7 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reward-time-frequencies", type=int, default=16)
     parser.add_argument("--boundary-penalty-weight", type=float, default=0.1)
     parser.add_argument("--reward-eval-every", type=int, default=250)
-    parser.add_argument("--transition-trajectories", type=int, default=64)
+    parser.add_argument(
+        "--transition-trajectories",
+        type=int,
+        default=64,
+        help="Number of data examples used in each reward minibatch",
+    )
     parser.add_argument("--reward-eval-batch-size", type=int, default=256)
     parser.add_argument("--num-preview-samples", type=int, default=64)
     return parser.parse_args()
