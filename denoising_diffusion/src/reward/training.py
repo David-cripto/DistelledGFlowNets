@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,8 +19,6 @@ from .model import DetailedBalanceModel, build_detailed_balance_model
 
 
 torch.set_num_threads(1)
-
-_LOG_2PI = math.log(2.0 * math.pi)
 
 
 @dataclass
@@ -139,7 +136,7 @@ def _reverse_kernel_statistics(
     # This mean matches the DDPM epsilon-parameterized reverse mean used in
     # the paper; we compute it through x0_hat only as an equivalent form.
     mean = schedule.posterior_mean(x0_prediction, x_t, timesteps)
-    variance = schedule.posterior_variance(timesteps, x_t)
+    variance = schedule.extract(schedule.betas, timesteps, x_t)
     return mean, variance
 
 
@@ -154,16 +151,25 @@ def _forward_kernel_statistics(
     return mean, beta
 
 
-def _isotropic_gaussian_log_prob(
-    samples: torch.Tensor,
-    mean: torch.Tensor,
-    variance: torch.Tensor,
+def _matched_variance_transition_log_ratio(
+    x_t: torch.Tensor,
+    x_prev: torch.Tensor,
+    reverse_mean: torch.Tensor,
+    timesteps: torch.Tensor,
+    schedule: DDPMSchedule,
 ) -> torch.Tensor:
-    variance = variance.clamp_min(1e-12)
-    flat_dim = samples[0].numel()
-    squared_error = (samples - mean).reshape(samples.shape[0], -1).pow(2).sum(dim=-1)
-    variance_flat = variance.reshape(samples.shape[0], -1)[:, 0]
-    return -0.5 * (squared_error / variance_flat + flat_dim * (_LOG_2PI + torch.log(variance_flat)))
+    forward_mean, beta = _forward_kernel_statistics(
+        x_prev=x_prev,
+        timesteps=timesteps,
+        schedule=schedule,
+    )
+    beta = beta.clamp_min(schedule.epsilon)
+    reverse_error = (x_prev - reverse_mean).reshape(x_prev.shape[0], -1).pow(2).sum(dim=-1)
+    forward_error = (x_t - forward_mean).reshape(x_t.shape[0], -1).pow(2).sum(dim=-1)
+    beta_flat = beta.reshape(beta.shape[0], -1)[:, 0]
+    # With sigma_t^2 = beta_t for both kernels, the Gaussian normalizers cancel,
+    # so log q(x_t | x_{t-1}) - log p_theta(x_{t-1} | x_t) is just this quadratic gap.
+    return 0.5 * (reverse_error - forward_error) / beta_flat
 
 
 @torch.no_grad()
@@ -309,18 +315,18 @@ def train_detailed_balance_model(
         )
 
         with torch.no_grad():
-            forward_mean, forward_variance = _forward_kernel_statistics(
+            transition_log_ratio = _matched_variance_transition_log_ratio(
+                x_t=x_t,
                 x_prev=x_prev,
+                reverse_mean=reverse_mean,
                 timesteps=timesteps,
                 schedule=schedule,
             )
-            log_p = _isotropic_gaussian_log_prob(x_prev, reverse_mean, reverse_variance)
-            log_q = _isotropic_gaussian_log_prob(x_t, forward_mean, forward_variance)
 
         previous_timesteps = (timesteps - 1).clamp_min(0)
         log_f_t = model(x_t, t_now, timesteps=timesteps)
         log_f_prev = model(x_prev, t_prev, timesteps=previous_timesteps)
-        residual = log_f_prev + log_q - log_f_t - log_p
+        residual = log_f_prev - log_f_t + transition_log_ratio
         detailed_balance_loss = residual.pow(2).mean()
 
         boundary_states = reference_distribution.sample(config.batch_num_trajectories, device=device)
