@@ -66,8 +66,8 @@ def get_dataset_info(name: str) -> DatasetInfo:
             name="mnist",
             image_shape=(1, 28, 28),
             num_classes=10,
-            channel_mean=(0.5,),
-            channel_std=(0.5,),
+            channel_mean=(0.1307,),
+            channel_std=(0.3081,),
         )
     raise ValueError(f"Unsupported dataset '{name}'. Expected one of {', '.join(AVAILABLE_DATASETS)}.")
 
